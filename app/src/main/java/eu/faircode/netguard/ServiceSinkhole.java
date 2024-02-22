@@ -141,6 +141,7 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
     private Thread tunnelThread = null;
     private ServiceSinkhole.Builder last_builder = null;
     private ParcelFileDescriptor vpn = null;
+    private Network assignedNetwork = null;
     private boolean temporarilyStopped = false;
 
     private long last_hosts_modified = 0;
@@ -515,7 +516,7 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
 
                 last_builder = getBuilder(listAllowed, listRule);
                 vpn = startVPN(last_builder);
-                if (vpn == null)
+                if (vpn == null || !assignNetwork())
                     throw new StartFailedException(getString((R.string.msg_start_failed)));
 
                 startNative(vpn, listAllowed, listRule);
@@ -622,7 +623,7 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
                 }
             }
 
-            if (vpn == null)
+            if (vpn == null || !assignNetwork())
                 throw new StartFailedException(getString((R.string.msg_start_failed)));
 
             startNative(vpn, listAllowed, listRule);
@@ -1235,25 +1236,36 @@ public class ServiceSinkhole extends VpnService implements SharedPreferences.OnS
     @TargetApi(Build.VERSION_CODES.LOLLIPOP)
     private ParcelFileDescriptor startVPN(Builder builder) throws SecurityException {
         try {
-            ParcelFileDescriptor pfd = builder.establish();
-
-            // Set underlying network
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
-                Network active = (cm == null ? null : cm.getActiveNetwork());
-                if (active != null) {
-                    Log.i(TAG, "Setting underlying network=" + cm.getNetworkInfo(active));
-                    setUnderlyingNetworks(new Network[]{active});
-                }
-            }
-
-            return pfd;
+            return builder.establish();
         } catch (SecurityException ex) {
             throw ex;
         } catch (Throwable ex) {
             Log.e(TAG, ex.toString() + "\n" + Log.getStackTraceString(ex));
             return null;
         }
+    }
+
+    @TargetApi(Build.VERSION_CODES.LOLLIPOP)
+    private boolean assignNetwork() {
+        // Set underlying network
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+                Network active = (cm == null ? null : cm.getActiveNetwork());
+                if (active == null) {
+                    Log.i(TAG, "Setting underlying network=NONE");
+                    setUnderlyingNetworks(new Network[]{});
+                } else if (assignedNetwork == null || !assignedNetwork.equals(active)) {
+                    Log.i(TAG, "Setting underlying network=" + active + " " + cm.getNetworkInfo(active));
+                    setUnderlyingNetworks(new Network[]{active});
+                }
+                assignedNetwork = active;
+            } catch (Throwable ex) {
+                Log.e(TAG, ex.toString() + "\n" + Log.getStackTraceString(ex));
+                return false;
+            }
+        }
+        return true;
     }
 
     private Builder getBuilder(List<Rule> listAllowed, List<Rule> listRule) {
